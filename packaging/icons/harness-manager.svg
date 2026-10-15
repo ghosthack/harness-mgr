@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Original super-deformed torii; Fluent Emoji colours only, no third-party artwork -->
+  <defs>
+    <linearGradient id="pillar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#D83C16"/>
+      <stop offset="0.3" stop-color="#FF8D3A"/>
+      <stop offset="0.7" stop-color="#FF7A42"/>
+      <stop offset="1" stop-color="#C04731"/>
+    </linearGradient>
+    <linearGradient id="pillarShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ED2A3E" stop-opacity="0"/>
+      <stop offset="1" stop-color="#ED2A3E" stop-opacity="0.75"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FF8948"/>
+      <stop offset="1" stop-color="#D73828"/>
+    </linearGradient>
+    <linearGradient id="roof" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#705F80"/>
+      <stop offset="0.55" stop-color="#562E43"/>
+      <stop offset="1" stop-color="#2D1C2D"/>
+    </linearGradient>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#30212D"/>
+      <stop offset="0.4" stop-color="#63566E"/>
+      <stop offset="1" stop-color="#2E2A33"/>
+    </linearGradient>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6E5D7E"/>
+      <stop offset="1" stop-color="#29272C"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- stubby pillars, flaring slightly toward the base -->
+  <g>
+    <path d="M262 350 H382 L398 812 H246 Z" fill="url(#pillar)"/>
+    <path d="M262 350 H382 L398 812 H246 Z" fill="url(#pillarShade)"/>
+    <path d="M642 350 H762 L778 812 H626 Z" fill="url(#pillar)"/>
+    <path d="M642 350 H762 L778 812 H626 Z" fill="url(#pillarShade)"/>
+    <rect x="282" y="560" width="22" height="220" rx="11" fill="#ffffff" opacity="0.28"/>
+    <rect x="662" y="560" width="22" height="220" rx="11" fill="#ffffff" opacity="0.28"/>
+  </g>
+
+  <!-- dark bands below the nuki, like the Fluent emoji -->
+  <path d="M258 520 H386 L390 604 H254 Z" fill="url(#dark)"/>
+  <path d="M638 520 H766 L770 604 H634 Z" fill="url(#dark)"/>
+
+  <!-- round chunky bases -->
+  <rect x="216" y="790" width="212" height="104" rx="44" fill="url(#base)"/>
+  <rect x="596" y="790" width="212" height="104" rx="44" fill="url(#base)"/>
+  <rect x="244" y="802" width="120" height="22" rx="11" fill="#ffffff" opacity="0.18"/>
+  <rect x="624" y="802" width="120" height="22" rx="11" fill="#ffffff" opacity="0.18"/>
+
+  <!-- nuki: fat rounded lower beam -->
+  <rect x="112" y="446" width="800" height="92" rx="46" fill="url(#beam)"/>
+  <rect x="150" y="458" width="724" height="26" rx="13" fill="url(#gloss)"/>
+
+  <!-- gakuzuka: centre strut -->
+  <rect x="456" y="340" width="112" height="120" rx="18" fill="url(#dark)"/>
+
+  <!-- shimaki: orange beam under the roof -->
+  <rect x="150" y="292" width="724" height="90" rx="40" fill="url(#beam)"/>
+  <rect x="186" y="302" width="652" height="24" rx="12" fill="url(#gloss)"/>
+
+  <!-- kasagi: big puffy roof beam with upturned tips -->
+  <path d="M96 168
+           Q512 252 928 168
+           Q948 164 944 186
+           L918 268
+           Q910 300 878 302
+           Q512 340 146 302
+           Q114 300 106 268
+           L80 186
+           Q76 164 96 168 Z" fill="url(#roof)"/>
+  <path d="M140 196 Q512 262 884 196 Q880 214 866 218 Q512 284 158 218 Q144 214 140 196 Z"
+        fill="url(#gloss)"/>
+</svg>

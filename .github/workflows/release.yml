@@ -1,0 +1,447 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric release version (X.Y.Z)
+        required: true
+        default: "1.0.0"
+      publish:
+        description: Publish/update a GitHub Release after packaging
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Validate release version
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+          else
+            version="$INPUT_VERSION"
+            tag="v$version"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be exactly vX.Y.Z (got '$tag')" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Reject publishing an existing version
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists." >&2
+            echo "Windows Installer packages cannot be replaced in place; publish a higher X.Y.Z version." >&2
+            exit 1
+          fi
+
+  verify:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '26'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python3 scripts/audit-export.py
+      - run: ./scripts/build.sh verify -Drevision=${{ needs.metadata.outputs.version }}
+      - run: python3 scripts/verify-app.py ${{ needs.metadata.outputs.version }}
+      - run: env -u JMUX_LAUNCHER java --enable-native-access=ALL-UNNAMED --add-modules=jdk.httpserver -jar target/harness-manager-${{ needs.metadata.outputs.version }}.jar --package-smoke
+
+  package:
+    needs: [metadata, verify]
+    name: Package ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    environment: ${{ matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            asset: macos-arm64
+            environment: release
+          - runner: windows-2025-vs2026
+            asset: windows-x64
+            environment: release-signing
+          - runner: ubuntu-24.04
+            asset: linux-x64
+            environment: release
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 26
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "26"
+          cache: maven
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install Apache Maven 3.9.16
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_TOOLS="$RUNNER_TEMP/harness-manager-maven"
+          mkdir -p "$TASK_TOOLS"
+          URL="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            "$URL" -o "$TASK_TOOLS/maven.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            "$URL.sha512" -o "$TASK_TOOLS/maven.sha512"
+          (
+            # Relative archive paths avoid GNU tar treating a Windows drive as a host.
+            cd "$TASK_TOOLS"
+            EXPECTED="$(tr -d '[:space:]' < maven.sha512)"
+            [[ "$EXPECTED" =~ ^[0-9a-fA-F]{128}$ ]] || {
+              echo "Invalid Maven SHA-512 response" >&2; exit 1;
+            }
+            printf '%s  maven.tar.gz\n' "$EXPECTED" > maven.checksum
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              shasum -a 512 -c maven.checksum
+            else
+              sha512sum -c maven.checksum
+            fi
+            gzip -t maven.tar.gz
+            tar -xzf maven.tar.gz
+            test -f apache-maven-3.9.16/bin/mvn
+          )
+          echo "$TASK_TOOLS/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+
+      - name: Install Linux packaging prerequisites
+        if: matrix.asset == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fakeroot
+
+      - name: Import macOS signing certificate
+        if: matrix.asset == 'macos-arm64'
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [[ -z "$CERTIFICATE_BASE64" ]]; then
+            echo "No macOS certificate configured; producing an unsigned package."
+            exit 0
+          fi
+          certificate="$RUNNER_TEMP/harness-manager-signing.p12"
+          keychain="$RUNNER_TEMP/harness-manager-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_BASE64" |
+            openssl base64 -d -A -out "$certificate"
+          security create-keychain -p actions "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p actions "$keychain"
+          security import "$certificate" -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          intermediate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl --fail --silent --show-error --location \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            --output "$intermediate"
+          intermediate_sha256="$(openssl x509 -inform DER -in "$intermediate" \
+            -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :)"
+          if [[ "$intermediate_sha256" != \
+                F16CD3C54C7F83CEA4BF1A3E6A0819C8AAA8E4A1528FD144715F350643D2DF3A ]]; then
+            echo "Unexpected Developer ID G2 intermediate fingerprint." >&2
+            exit 1
+          fi
+          security add-certificates -k "$keychain" "$intermediate"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k actions "$keychain"
+          security list-keychains -d user -s "$keychain"
+          valid_identity_count="$(security find-identity -v -p codesigning "$keychain" | \
+            sed -n 's/^ *\([0-9][0-9]*\) valid identities found$/\1/p')"
+          if [[ "$valid_identity_count" != "1" ]]; then
+            echo "Expected exactly one valid macOS signing identity." >&2
+            security find-identity -v -p codesigning "$keychain" >&2
+            exit 1
+          fi
+          echo "MACOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          rm -f "$certificate" "$intermediate"
+
+      - name: Build and package macOS or Linux
+        if: matrix.asset != 'windows-x64'
+        shell: bash
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: bash scripts/package.sh all "${{ needs.metadata.outputs.version }}"
+
+      - name: Build Windows application image
+        if: matrix.asset == 'windows-x64'
+        shell: bash
+        run: bash scripts/package.sh app-image "${{ needs.metadata.outputs.version }}"
+
+      - name: Log in to Azure with GitHub OIDC
+        if: matrix.asset == 'windows-x64'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows application launcher
+        if: matrix.asset == 'windows-x64'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\jpackage\images\Harness Manager\Harness Manager.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign Windows jmux launcher
+        if: matrix.asset == 'windows-x64'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\jpackage\images\Harness Manager\jmux.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign Windows stimulator launcher
+        if: matrix.asset == 'windows-x64'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\jpackage\images\Harness Manager\harness-stimulator.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package signed Windows application image
+        if: matrix.asset == 'windows-x64'
+        shell: bash
+        run: bash scripts/package.sh installer "${{ needs.metadata.outputs.version }}"
+
+      - name: Sign Windows installer
+        if: matrix.asset == 'windows-x64'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\jpackage\release\harness-manager-${{ needs.metadata.outputs.version }}-windows-x64.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Windows signatures and timestamps
+        if: matrix.asset == 'windows-x64'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $files = @(
+            (Join-Path $env:GITHUB_WORKSPACE `
+              "target\jpackage\images\Harness Manager\Harness Manager.exe"),
+            (Join-Path $env:GITHUB_WORKSPACE `
+              "target\jpackage\images\Harness Manager\jmux.exe"),
+            (Join-Path $env:GITHUB_WORKSPACE `
+              "target\jpackage\images\Harness Manager\harness-stimulator.exe"),
+            (Join-Path $env:GITHUB_WORKSPACE `
+              "target\jpackage\release\harness-manager-$env:RELEASE_VERSION-windows-x64.exe")
+          )
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature on $(Split-Path -Leaf $file): $($signature.Status)"
+            }
+            if ($null -eq $signature.TimeStamperCertificate) {
+              throw "Missing Authenticode timestamp on $(Split-Path -Leaf $file)"
+            }
+            Write-Host "Valid signature and timestamp: $(Split-Path -Leaf $file)"
+          }
+
+      - name: Smoke-test Windows install and upgrade
+        if: matrix.asset == 'windows-x64'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $candidate = Join-Path $env:GITHUB_WORKSPACE `
+            "target\jpackage\release\harness-manager-$env:RELEASE_VERSION-windows-x64.exe"
+          $expected = [version]$env:RELEASE_VERSION
+          $releases = gh release list --limit 100 `
+            --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+          $previous = $releases |
+            Where-Object {
+              -not $_.isDraft -and -not $_.isPrerelease -and
+              $_.tagName -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -and
+              [version]$_.tagName.Substring(1) -lt $expected
+            } |
+            Sort-Object { [version]$_.tagName.Substring(1) } -Descending |
+            Select-Object -First 1
+
+          $scriptArguments = @{
+            Installer = $candidate
+            ExpectedVersion = $env:RELEASE_VERSION
+          }
+          if ($previous) {
+            $previousDir = Join-Path $env:RUNNER_TEMP "previous-release"
+            New-Item -ItemType Directory -Path $previousDir | Out-Null
+            gh release download $previous.tagName `
+              --pattern "harness-manager-*-windows-x64.exe" `
+              --dir $previousDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to download previous release $($previous.tagName)"
+            }
+            $previousInstallers = @(Get-ChildItem -LiteralPath $previousDir -Filter "*.exe")
+            if ($previousInstallers.Count -ne 1) {
+              throw "Expected one previous Windows installer; found $($previousInstallers.Count)"
+            }
+            $scriptArguments.UpgradeFromInstaller = $previousInstallers[0].FullName
+          }
+          & "$env:GITHUB_WORKSPACE\scripts\smoke-windows-installer.ps1" @scriptArguments
+
+      - name: Notarize and staple macOS DMG
+        if: matrix.asset == 'macos-arm64'
+        shell: bash
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+        run: |
+          if [[ -z "$NOTARY_APPLE_ID" ||
+                -z "$NOTARY_PASSWORD" ||
+                -z "$NOTARY_TEAM_ID" ]]; then
+            echo "No complete notarization credentials configured; skipping notarization."
+            exit 0
+          fi
+          if [[ -z "$SIGNING_IDENTITY" ]]; then
+            echo "Notarization credentials exist but MACOS_SIGNING_IDENTITY is missing." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          images=(target/jpackage/release/*.dmg)
+          if (( ${#images[@]} != 1 )); then
+            echo "Expected exactly one DMG to notarize." >&2
+            exit 1
+          fi
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" "${images[0]}"
+          codesign --verify --strict "${images[0]}"
+          submission="$RUNNER_TEMP/harness-manager-notary-submission.json"
+          xcrun notarytool submit "${images[0]}" --wait \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --output-format json > "$submission"
+          cat "$submission"
+          submission_id="$(jq -r '.id // empty' "$submission")"
+          submission_status="$(jq -r '.status // empty' "$submission")"
+          if [[ "$submission_status" != "Accepted" ]]; then
+            echo "Apple notarization failed with status: $submission_status" >&2
+            if [[ -n "$submission_id" ]]; then
+              xcrun notarytool log "$submission_id" \
+                --apple-id "$NOTARY_APPLE_ID" \
+                --password "$NOTARY_PASSWORD" \
+                --team-id "$NOTARY_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+          xcrun stapler staple "${images[0]}"
+          xcrun stapler validate "${images[0]}"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ matrix.asset }}
+          path: target/jpackage/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove temporary signing keychain
+        if: always() && matrix.asset == 'macos-arm64'
+        shell: bash
+        run: |
+          if [[ -n "${MACOS_KEYCHAIN:-}" && -f "$MACOS_KEYCHAIN" ]]; then
+            security delete-keychain "$MACOS_KEYCHAIN"
+          fi
+
+  publish:
+    needs: [metadata, verify, package]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: packages-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: |
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |
+            sort -z |
+            xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG appeared after validation; refusing to replace its assets." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Harness Manager $RELEASE_VERSION" \
+            --generate-notes

@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 26
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "26"
+          cache: maven
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install Apache Maven 3.9.16
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_TOOLS="$RUNNER_TEMP/harness-manager-maven"
+          mkdir -p "$TASK_TOOLS"
+          URL="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            "$URL" -o "$TASK_TOOLS/maven.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            "$URL.sha512" -o "$TASK_TOOLS/maven.sha512"
+          (
+            # Relative archive paths avoid GNU tar treating a Windows drive as a host.
+            cd "$TASK_TOOLS"
+            EXPECTED="$(tr -d '[:space:]' < maven.sha512)"
+            [[ "$EXPECTED" =~ ^[0-9a-fA-F]{128}$ ]] || {
+              echo "Invalid Maven SHA-512 response" >&2; exit 1;
+            }
+            printf '%s  maven.tar.gz\n' "$EXPECTED" > maven.checksum
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              shasum -a 512 -c maven.checksum
+            else
+              sha512sum -c maven.checksum
+            fi
+            gzip -t maven.tar.gz
+            tar -xzf maven.tar.gz
+            test -f apache-maven-3.9.16/bin/mvn
+          )
+          echo "$TASK_TOOLS/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the exported project
+        run: |
+          python3 scripts/audit-export.py
+          ./scripts/build.sh verify -Drevision=1.0.0
+          python3 scripts/verify-app.py 1.0.0
+          env -u JMUX_LAUNCHER java --enable-native-access=ALL-UNNAMED --add-modules=jdk.httpserver -jar target/harness-manager-1.0.0.jar --package-smoke

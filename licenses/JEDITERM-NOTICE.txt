@@ -1,0 +1,23 @@
+JediTerm ghosthack fork
+https://github.com/ghosthack/jediterm
+
+Based on JediTerm by JetBrains:
+https://github.com/JetBrains/jediterm
+Authors include Dmitry Trofimov and Clement Poulain.
+Existing copyright and attribution notices are retained in the source files.
+This distribution uses upstream's Apache License 2.0 licensing option.
+
+Character-set designation and mapping code is based on Apache 2.0 licensed
+jVT220 classes by J.W. Janssen: https://github.com/jawi/jVT220
+See core/src/com/jediterm/terminal/emulator/charset/packageinfo.txt.
+Swing UI code originates in JediTerm and JetBrains IntelliJ Community.
+
+Copyright 2026 ghosthack for fork modifications, licensed under Apache 2.0.
+Changes include terminal color-mode reporting, extended cursor-position
+responses, sequence diagnostics, synchronized-output handling, streaming
+line-buffer behavior, cursor-paint consistency, and Maven publishing setup.
+Modified source/test files carry a fork modification notice. Build and
+release changes are described in PUBLISHING.md and the repository history.
+
+The core and UI JARs do not bundle their runtime dependencies. Kotlin,
+SLF4J, and JetBrains annotations retain their respective upstream licenses.
