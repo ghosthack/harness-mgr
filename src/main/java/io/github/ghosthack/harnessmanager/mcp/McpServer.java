@@ -58,6 +58,8 @@ public final class McpServer implements AutoCloseable {
     static final List<String> PROTOCOL_VERSIONS = List.of("2025-06-18", "2025-03-26", "2024-11-05");
     static final String SERVER_NAME = "harness-manager";
     static final int MAX_BODY_BYTES = 1 << 20;
+    /** How much of an oversized body is read and discarded so the 413 reaches the client. */
+    private static final long MAX_DRAIN_BYTES = 16L << 20;
     static final String CONTEXT = "/mcp";
 
     static final int PARSE_ERROR = -32700;
@@ -281,18 +283,28 @@ public final class McpServer implements AutoCloseable {
     /** The body, or {@code null} when it exceeds {@link #MAX_BODY_BYTES}. */
     private static byte[] readBody(HttpExchange exchange) throws IOException {
         String length = exchange.getRequestHeaders().getFirst("Content-Length");
+        boolean declaredTooLarge = false;
         if (length != null) {
             try {
-                if (Long.parseLong(length.trim()) > MAX_BODY_BYTES) {
-                    return null;
-                }
+                declaredTooLarge = Long.parseLong(length.trim()) > MAX_BODY_BYTES;
             } catch (NumberFormatException ignored) {
                 // fall through to the bounded read
             }
         }
         try (InputStream in = exchange.getRequestBody()) {
-            byte[] body = in.readNBytes(MAX_BODY_BYTES + 1);
-            return body.length > MAX_BODY_BYTES ? null : body;
+            byte[] body = declaredTooLarge ? null : in.readNBytes(MAX_BODY_BYTES + 1);
+            if (body != null && body.length <= MAX_BODY_BYTES) {
+                return body;
+            }
+            // Drain what the client is still sending before the 413: closing on unread
+            // bytes resets the connection, and the client never sees the status.
+            byte[] discard = new byte[8192];
+            long drained = 0;
+            int n;
+            while (drained < MAX_DRAIN_BYTES && (n = in.read(discard)) > 0) {
+                drained += n;
+            }
+            return null;
         }
     }
 
