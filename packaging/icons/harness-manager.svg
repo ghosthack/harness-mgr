@@ -33,6 +33,12 @@
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#B7791F"/>
+      <stop offset="0.35" stop-color="#FFD966"/>
+      <stop offset="0.6" stop-color="#F4B83A"/>
+      <stop offset="1" stop-color="#9C5F12"/>
+    </linearGradient>
   </defs>
 
   <!-- stubby pillars, flaring slightly toward the base -->
@@ -60,7 +66,8 @@
   <rect x="150" y="458" width="724" height="26" rx="13" fill="url(#gloss)"/>
 
   <!-- gakuzuka: centre strut -->
-  <rect x="456" y="340" width="112" height="120" rx="18" fill="url(#dark)"/>
+  <rect x="456" y="340" width="112" height="120" rx="18" fill="url(#gold)"/>
+  <rect x="474" y="352" width="20" height="96" rx="10" fill="#ffffff" opacity="0.35"/>
 
   <!-- shimaki: orange beam under the roof -->
   <rect x="150" y="292" width="724" height="90" rx="40" fill="url(#beam)"/>

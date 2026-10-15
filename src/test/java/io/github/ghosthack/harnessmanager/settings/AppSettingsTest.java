@@ -320,20 +320,15 @@ final class AppSettingsTest {
     }
 
     @Test
-    void localHostDefaultsPerPlatformAndParsesBothIds() throws IOException {
-        assertEquals("tmux", AppSettings.defaultLocalHostId("Mac OS X"));
-        assertEquals("tmux", AppSettings.defaultLocalHostId("Linux"));
-        assertEquals("jmux", AppSettings.defaultLocalHostId("Windows 11"));
-        assertEquals("jmux", AppSettings.parseLocalHostId(null, "Windows 10"));
-        assertEquals("tmux", AppSettings.parseLocalHostId("nonsense", "Mac OS X"));
-        assertEquals("jmux", AppSettings.parseLocalHostId("nonsense", "Windows 11"));
-        assertEquals("tmux", AppSettings.parseLocalHostId(" TMUX ", "Windows 11"));
-        assertEquals("jmux", AppSettings.parseLocalHostId(" JmUx ", "Linux"));
+    void localHostDefaultsToJmuxAndParsesBothIds() throws IOException {
+        assertEquals("jmux", AppSettings.parseLocalHostId(null));
+        assertEquals("jmux", AppSettings.parseLocalHostId("nonsense"));
+        assertEquals("tmux", AppSettings.parseLocalHostId(" TMUX "));
+        assertEquals("jmux", AppSettings.parseLocalHostId(" JmUx "));
 
-        String platformDefault = AppSettings.defaultLocalHostId(System.getProperty("os.name", ""));
-        assertEquals(platformDefault, AppSettings.localHostId()); // no file at all
+        assertEquals("jmux", AppSettings.localHostId()); // no file at all
         settings("session.host=nonsense\n");
-        assertEquals(platformDefault, AppSettings.localHostId());
+        assertEquals("jmux", AppSettings.localHostId());
         settings("session.host=jmux\n");
         assertEquals("jmux", AppSettings.localHostId());
         AppSettings.saveLocalHostId("tmux");
@@ -356,6 +351,39 @@ final class AppSettingsTest {
                 System.setProperty(AppSettings.LOCAL_HOST_OVERRIDE_PROPERTY, previous);
             }
         }
+    }
+
+    @Test
+    void uiThemeParsesExplicitChoicesAndLeavesTheRestToTheSystem() throws IOException {
+        assertEquals(Optional.of(AppSettings.UiTheme.LIGHT), AppSettings.UiTheme.parse(" Light "));
+        assertEquals(Optional.of(AppSettings.UiTheme.DARK), AppSettings.UiTheme.parse("dark"));
+        assertEquals(Optional.empty(), AppSettings.UiTheme.parse(null));
+        assertEquals(Optional.empty(), AppSettings.UiTheme.parse("system"));
+        settings("ui.theme=dark\n");
+        assertEquals(AppSettings.UiTheme.DARK, AppSettings.uiTheme());
+    }
+
+    @Test
+    void sidebarBackgroundDefaultsToThemeBlackWhite() throws IOException {
+        assertEquals(AppSettings.SidebarBackground.TERMINAL, AppSettings.sidebarBackground());
+        settings("sidebar.background=nonsense\n");
+        assertEquals(AppSettings.SidebarBackground.TERMINAL, AppSettings.sidebarBackground());
+        settings("sidebar.background=default\n");
+        assertEquals(AppSettings.SidebarBackground.DEFAULT, AppSettings.sidebarBackground());
+        settings("sidebar.background=ui-gray\n");
+        assertEquals(AppSettings.SidebarBackground.UI_GRAY, AppSettings.sidebarBackground());
+    }
+
+    @Test
+    void sidebarMatchesDefaultOnAndOnlyOffUnlinks() throws IOException {
+        assertTrue(AppSettings.rightPaneMatchesSidebar());
+        assertTrue(AppSettings.toolbarMatchesSidebar());
+        assertTrue(AppSettings.sidebarSectionsMatchBackground());
+        settings("right-pane.match-sidebar=off\ntoolbar.match-sidebar=off\n");
+        assertFalse(AppSettings.rightPaneMatchesSidebar());
+        assertFalse(AppSettings.toolbarMatchesSidebar());
+        AppSettings.saveRightPaneMatchesSidebar(true);
+        assertTrue(AppSettings.rightPaneMatchesSidebar());
     }
 
     @Test

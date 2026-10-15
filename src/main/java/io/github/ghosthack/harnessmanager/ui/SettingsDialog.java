@@ -159,7 +159,7 @@ final class SettingsDialog {
 
         JComboBox<Choice<AppSettings.SidebarBackground>> sidebarBackgroundCombo =
                 combo(AppSettings.sidebarBackground(),
-                        new Choice<>("Default gray", AppSettings.SidebarBackground.DEFAULT),
+                        new Choice<>("Gray", AppSettings.SidebarBackground.DEFAULT),
                         new Choice<>("UI gray (darker in dark mode)", AppSettings.SidebarBackground.UI_GRAY),
                         new Choice<>("Black / white (follow theme)", AppSettings.SidebarBackground.TERMINAL));
 

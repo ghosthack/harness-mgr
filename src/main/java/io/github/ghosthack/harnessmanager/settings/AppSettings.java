@@ -65,8 +65,7 @@ public final class AppSettings {
      * Which local substrate new local sessions are created on:
      * {@code session.host = tmux | jmux}, overridable per run via
      * {@link #LOCAL_HOST_OVERRIDE_PROPERTY}. Unset or unrecognized falls back to the
-     * platform default — tmux on macOS/Linux, the jmux daemon on
-     * Windows, where tmux does not run. Read at creation time (like
+     * jmux daemon on every platform; tmux stays available where it runs. Read at creation time (like
      * {@link #statusPollIntervalMs}), so a change applies to the next Open without a
      * restart. Only affects <em>new local</em> sessions: resume, duplicate and
      * shell-here inherit the source row's host; Adopt asks the router which host listed
@@ -76,17 +75,16 @@ public final class AppSettings {
         String override = System.getProperty(LOCAL_HOST_OVERRIDE_PROPERTY);
         String configured = override != null && !override.isBlank()
                 ? override : load().getProperty("session.host");
-        return parseLocalHostId(configured, System.getProperty("os.name", ""));
+        return parseLocalHostId(configured);
     }
 
     /** Persists the local-host choice — always written, so the file documents the default too. */
     public static void saveLocalHostId(String hostId) {
-        String normalized = parseLocalHostId(hostId, System.getProperty("os.name", ""));
+        String normalized = parseLocalHostId(hostId);
         save(p -> p.setProperty("session.host", normalized));
     }
 
-    /** Package-visible so the unit suite can pin the platform default per OS name. */
-    static String parseLocalHostId(String value, String osName) {
+    static String parseLocalHostId(String value) {
         if (value != null) {
             String trimmed = value.trim();
             if (trimmed.equalsIgnoreCase(TMUX_HOST_ID)) {
@@ -96,12 +94,7 @@ public final class AppSettings {
                 return JMUX_HOST_ID;
             }
         }
-        return defaultLocalHostId(osName);
-    }
-
-    /** tmux everywhere it runs; the daemon on Windows, where it doesn't. */
-    static String defaultLocalHostId(String osName) {
-        return osName.toLowerCase(Locale.ROOT).startsWith("windows") ? JMUX_HOST_ID : TMUX_HOST_ID;
+        return JMUX_HOST_ID;
     }
 
     /**
@@ -346,7 +339,10 @@ public final class AppSettings {
         save(p -> p.setProperty("toolbar.batch-actions", on ? "on" : "off"));
     }
 
-    /** Sidebar surface: the original list gray, the UI panel gray, or theme black/white. */
+    /**
+     * Sidebar surface: {@code sidebar.background=default|ui-gray|terminal} — the original
+     * list gray, the UI panel gray, or theme black/white. Unset or unrecognized: terminal.
+     */
     public enum SidebarBackground {
         DEFAULT,
         UI_GRAY,
@@ -360,7 +356,7 @@ public final class AppSettings {
                     }
                 }
             }
-            return DEFAULT;
+            return TERMINAL;
         }
     }
 
@@ -373,18 +369,18 @@ public final class AppSettings {
                 background.name().toLowerCase(Locale.ROOT).replace('_', '-')));
     }
 
-    /** Whether the right pane follows the sidebar surface instead of its own background. */
+    /** Whether the right pane follows the sidebar surface instead of its own background; on unless explicitly {@code off}. */
     public static boolean rightPaneMatchesSidebar() {
-        return "on".equalsIgnoreCase(load().getProperty("right-pane.match-sidebar", "off").trim());
+        return !"off".equalsIgnoreCase(load().getProperty("right-pane.match-sidebar", "on").trim());
     }
 
     public static void saveRightPaneMatchesSidebar(boolean on) {
         save(p -> p.setProperty("right-pane.match-sidebar", on ? "on" : "off"));
     }
 
-    /** Whether main-window toolbar surfaces and buttons follow the sidebar background. */
+    /** Whether main-window toolbar surfaces and buttons follow the sidebar background; on unless explicitly {@code off}. */
     public static boolean toolbarMatchesSidebar() {
-        return "on".equalsIgnoreCase(load().getProperty("toolbar.match-sidebar", "off").trim());
+        return !"off".equalsIgnoreCase(load().getProperty("toolbar.match-sidebar", "on").trim());
     }
 
     public static void saveToolbarMatchesSidebar(boolean on) {
@@ -502,19 +498,30 @@ public final class AppSettings {
         });
     }
 
-    /** App-wide look and feel: {@code ui.theme=dark|light}. */
+    /**
+     * App-wide look and feel: {@code ui.theme=dark|light}. Unset or unrecognized, the
+     * app follows the OS light/dark setting, and is dark where that can't be read.
+     */
     public enum UiTheme {
         DARK,
         LIGHT;
 
-        static UiTheme parse(String value) {
-            // unspecified or unrecognized -> dark, the app's default look
-            return value != null && value.trim().equalsIgnoreCase("light") ? LIGHT : DARK;
+        static Optional<UiTheme> parse(String value) {
+            if (value != null) {
+                for (UiTheme theme : values()) {
+                    if (theme.name().equalsIgnoreCase(value.trim())) {
+                        return Optional.of(theme);
+                    }
+                }
+            }
+            return Optional.empty();
         }
     }
 
     public static UiTheme uiTheme() {
-        return UiTheme.parse(load().getProperty("ui.theme"));
+        return UiTheme.parse(load().getProperty("ui.theme"))
+                .or(SystemAppearance::detected)
+                .orElse(UiTheme.DARK);
     }
 
     /** Persists the theme so the next launch starts in it. */

@@ -26,8 +26,11 @@ final class AppIcon {
         }
         frame.setIconImages(IMAGES);
 
-        // Native jpackage bundles get their icon from --icon. This also gives java -jar
-        // launches the same Dock/taskbar icon on platforms that expose the feature.
+        // Native jpackage bundles get their icon from --icon; replacing it at runtime would
+        // swap the Dock icon after launch. java -jar launches still need it set here.
+        if (System.getProperty("jpackage.app-path") != null) {
+            return;
+        }
         try {
             if (Taskbar.isTaskbarSupported()) {
                 Taskbar taskbar = Taskbar.getTaskbar();
