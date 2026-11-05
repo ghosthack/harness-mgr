@@ -56,6 +56,12 @@ final class MachineEditDialog {
                         "Missing field", JOptionPane.WARNING_MESSAGE);
                 return;
             }
+            String problem = Machine.destinationProblem(destination);
+            if (problem != null) {
+                JOptionPane.showMessageDialog(dialog, problem.substring(0, 1).toUpperCase() + problem.substring(1) + ".",
+                        "Invalid destination", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             Machine machine = existing == null
                     ? Machine.create(label, destination, keychainBox.isSelected())
                     : existing.withDetails(label, destination, keychainBox.isSelected());

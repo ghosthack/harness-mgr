@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class MachineRegistryTest {
@@ -96,6 +98,15 @@ final class MachineRegistryTest {
                         .findFirst().orElseThrow(() -> new AssertionError("no backup for " + content));
                 assertEquals(content, Files.readString(backup));
             }
+        }
+    }
+
+    @Test
+    void destinationsSshWouldMisreadAreRejected() {
+        assertNull(Machine.destinationProblem("lan23"));
+        assertNull(Machine.destinationProblem("me@example.test"));
+        for (String bad : List.of("", " ", "-oProxyCommand=touch /tmp/x", "-p22", "host name", "a\nb", "a\tb")) {
+            assertNotNull(Machine.destinationProblem(bad), bad);
         }
     }
 

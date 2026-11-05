@@ -34,7 +34,10 @@ public final class SshExec {
     /** Ceiling for the one-off (non-tmux) commands below; {@link RealTmux}'s remote
      * transport carries its own, longer ceiling for tmux calls themselves. */
     private static final long EXEC_TIMEOUT_SECONDS = 20;
-    private static final String CONNECT_TIMEOUT_SECONDS = "8";
+    /** ssh's smallest usable value (whole seconds; 0 means no limit). Every probe of an
+     * unreachable machine waits this long, including the one at startup, so it is kept
+     * minimal; once connected, ControlMaster reuses the connection and skips it. */
+    private static final String CONNECT_TIMEOUT_SECONDS = "1";
     private static final String CONTROL_PERSIST = "10m";
 
     /** ssh's own exit status for a failure of ssh itself — could not connect, timed out,

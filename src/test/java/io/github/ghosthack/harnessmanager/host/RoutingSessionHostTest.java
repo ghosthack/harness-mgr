@@ -146,6 +146,36 @@ final class RoutingSessionHostTest {
         assertFalse(live.contains("hm-remote-dead"));
     }
 
+    /** Each probe of an unreachable machine waits out the SSH connect timeout, so one
+     * failure must settle that machine for the whole pass — not cost one timeout per
+     * registered session — while other machines are still probed. */
+    @Test
+    void anUnreachableMachineIsProbedOncePerListingNotOncePerSession(@TempDir Path dir) {
+        FakeSessionHost local = new FakeSessionHost(TMUX);
+        FakeSessionHost reachable = new FakeSessionHost(TMUX);
+        Machine down = Machine.create("down", "down", false);
+        Machine up = Machine.create("up", "up", false);
+        MachineRegistry machineRegistry = machines(dir, down, up);
+        SessionRegistry sessions = SessionRegistry.load(dir.resolve("sessions.json"));
+        for (int i = 0; i < 3; i++) {
+            sessions.put(SessionEntry.newlyCreated("hm-down-" + i, "/a", HarnessType.SHELL,
+                    null, "0.0", down.id()));
+        }
+        sessions.put(SessionEntry.newlyCreated("hm-up", "/a", HarnessType.SHELL, null, "0.0", up.id()));
+        reachable.seedLiveSession("hm-up");
+        int[] attemptsOnDown = {0};
+        RoutingSessionHost router = new RoutingSessionHost(hosts(local), machineRegistry, sessions, m -> {
+            if (m.id().equals(down.id())) {
+                attemptsOnDown[0]++;
+                throw new SessionHostException("could not reach 'down' over SSH");
+            }
+            return reachable;
+        });
+
+        assertEquals(List.of("hm-up"), router.listSessions());
+        assertEquals(1, attemptsOnDown[0]);
+    }
+
     /** Required on Windows, where a tmux host is still constructed but the binary is
      * absent — and symmetrically on macOS while the daemon isn't running. */
     @Test

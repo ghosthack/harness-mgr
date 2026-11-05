@@ -34,6 +34,25 @@ public record Machine(
                 needsKeychainUnlock);
     }
 
+    /**
+     * Why {@code destination} can't be handed to ssh, or {@code null} when it can. It
+     * becomes a bare ssh argument, so a leading {@code -} would be parsed as an option
+     * (e.g. {@code -oProxyCommand=…}), and whitespace or control characters can't be a
+     * Host alias or {@code user@host}.
+     */
+    public static String destinationProblem(String destination) {
+        if (destination == null || destination.isBlank()) {
+            return "the SSH destination is required";
+        }
+        if (destination.startsWith("-")) {
+            return "the SSH destination must not start with '-'";
+        }
+        if (destination.codePoints().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) {
+            return "the SSH destination must not contain spaces or control characters";
+        }
+        return null;
+    }
+
     /** Returns a copy with edited label/destination/flag — same {@code id}. */
     public Machine withDetails(String label, String destination, boolean needsKeychainUnlock) {
         return new Machine(id, label, destination, needsKeychainUnlock);

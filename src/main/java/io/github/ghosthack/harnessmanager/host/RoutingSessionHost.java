@@ -242,9 +242,14 @@ public final class RoutingSessionHost implements SessionHost {
             }
         }
         unmanaged = Map.copyOf(listedBy);
+        // One failed probe settles a machine for this pass: each further probe of an
+        // unreachable machine waits out the SSH connect timeout again, so a machine
+        // with several registered sessions would otherwise stall reconciliation once
+        // per session.
+        Set<String> unreachable = new java.util.HashSet<>();
         for (SessionEntry entry : sessions.sessions()) {
             String machineId = entry.machineId();
-            if (machineId == null) {
+            if (machineId == null || unreachable.contains(machineId)) {
                 continue;
             }
             Optional<Machine> machine = machines.find(machineId);
@@ -256,6 +261,7 @@ public final class RoutingSessionHost implements SessionHost {
                     result.add(entry.tmuxSession());
                 }
             } catch (RuntimeException e) {
+                unreachable.add(machineId);
                 warnOnce("machine:" + machineId, "could not reach machine '" + machine.get().label()
                         + "' while reconciling '" + entry.tmuxSession() + "' — treating it as not live: "
                         + e.getMessage());
