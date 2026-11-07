@@ -93,12 +93,16 @@ public final class PiPlugin implements HarnessPlugin {
         return "pi";
     }
 
-    // processName() is overridden to "node" below; the default ownsProcess() (equality
-    // against processName()) is exactly right here, so it is left unoverridden — unlike
-    // GrokPlugin, there is no second, versioned-binary spelling to also match.
     @Override
     public String processName() {
         return NODE_PROCESS;
+    }
+
+    /** "node" (its process image, what tmux reports) or "pi" (its process title, what the
+     * jmux daemon's foreground probe reads): either way the harness is in the foreground. */
+    @Override
+    public boolean ownsProcess(String foregroundCommand) {
+        return NODE_PROCESS.equals(foregroundCommand) || "pi".equals(foregroundCommand);
     }
 
     /**

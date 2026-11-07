@@ -850,4 +850,12 @@ final class StateDetectorTest {
         assertEquals(SessionState.IDLE, c.state());
         assertEquals(Classification.Origin.PLUGIN, c.origin());
     }
+
+    @Test
+    void piOwnsBothItsProcessImageAndItsProcessTitle() {
+        PiPlugin pi = new PiPlugin();
+        assertTrue(pi.ownsProcess("node"), "what tmux reports");
+        assertTrue(pi.ownsProcess("pi"), "what the jmux daemon's probe reads");
+        assertFalse(pi.ownsProcess("vim"));
+    }
 }

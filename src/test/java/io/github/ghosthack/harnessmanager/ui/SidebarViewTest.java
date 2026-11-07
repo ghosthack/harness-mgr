@@ -10,6 +10,7 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Container;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -55,15 +56,15 @@ class SidebarViewTest {
     }
 
     @Test
-    void pendingLiveRowsShowAnHourglassWhileUnmanagedRowsStayUnbadged() {
+    void pendingLiveRowsShowABadgeWhileUnmanagedRowsStayUnbadged() {
         SidebarEntry pending = live("hm-pending", "/work/pending");
-        var pendingIcon = MainWindow.SidebarCellRenderer.statusIcon(pending);
+        var pendingIcon = SidebarCellRenderer.statusIcon(pending);
         assertNotNull(pendingIcon);
         pending.setState(SessionState.WORKING, "confirmed");
-        var workingIcon = MainWindow.SidebarCellRenderer.statusIcon(pending);
+        var workingIcon = SidebarCellRenderer.statusIcon(pending);
         assertNotSame(pendingIcon, workingIcon);
         assertEquals(pendingIcon.getIconWidth(), workingIcon.getIconWidth());
-        assertNull(MainWindow.SidebarCellRenderer.statusIcon(
+        assertNull(SidebarCellRenderer.statusIcon(
                 SidebarEntry.unmanaged("hm-unmanaged")));
     }
 
@@ -71,8 +72,8 @@ class SidebarViewTest {
     void deadSessionIconIsOnlyReticulatedWhenTheSettingIsEnabled() {
         SidebarEntry dead = SidebarEntry.dead(session("hm-dead", "/work/dead"));
 
-        assertNotSame(MainWindow.SidebarCellRenderer.statusIcon(dead, false),
-                MainWindow.SidebarCellRenderer.statusIcon(dead, true));
+        assertNotSame(SidebarCellRenderer.statusIcon(dead, false),
+                SidebarCellRenderer.statusIcon(dead, true));
     }
 
     @Test
@@ -148,7 +149,7 @@ class SidebarViewTest {
         model.addElement(live("hm-b", "/work/project"));
         model.addElement(SidebarEntry.unmanaged("hm-unmanaged"));
         JList<SidebarEntry> list = new JList<>(model);
-        MainWindow.SidebarCellRenderer renderer = new MainWindow.SidebarCellRenderer();
+        SidebarCellRenderer renderer = new SidebarCellRenderer();
         renderer.setFolderGrouping(true);
 
         JLabel header = groupHeader(render(renderer, list, 0));
@@ -224,7 +225,84 @@ class SidebarViewTest {
         assertTrue(entry.tooltipText().contains("<br>jmux<br>"));
     }
 
-    private static JPanel render(MainWindow.SidebarCellRenderer renderer,
+    @Test
+    void harnessStatusGlyphsAreDroppedFromPaneTitleNames() {
+        SidebarEntry entry = live("hm-glyph", "/work/project");
+        entry.setPaneTitle("✳ Refactor auth middleware");
+        assertEquals("Refactor auth middleware", entry.displayName());
+        entry.setPaneTitle("⠼ Refactor auth middleware");
+        assertEquals("Refactor auth middleware", entry.displayName());
+        // a bare mark carries no name: the previous one stays rather than blanking
+        entry.setPaneTitle("✳");
+        assertEquals("Refactor auth middleware", entry.displayName());
+        // only a leading mark followed by a space is a status mark
+        entry.setPaneTitle("v2 · draft");
+        assertEquals("v2 · draft", entry.displayName());
+    }
+
+    @Test
+    void onlyAWaitingRowCarriesTheAttentionPill() {
+        DefaultListModel<SidebarEntry> model = new DefaultListModel<>();
+        SidebarEntry waiting = live("hm-waiting", "/work/a");
+        waiting.setState(SessionState.WAITING_FOR_INPUT, "test");
+        SidebarEntry working = live("hm-working", "/work/b");
+        working.setState(SessionState.WORKING, "test");
+        model.addElement(waiting);
+        model.addElement(working);
+        model.addElement(SidebarEntry.dead(session("hm-dead", "/work/c")));
+        JList<SidebarEntry> list = new JList<>(model);
+        SidebarCellRenderer renderer = new SidebarCellRenderer();
+
+        JPanel cell = render(renderer, list, 0);
+        assertTrue(marks(cell).isVisible());
+        assertTrue(marks(cell).getComponent(3).isVisible());
+        assertFalse(marks(render(renderer, list, 1)).isVisible());
+        assertFalse(marks(render(renderer, list, 2)).isVisible());
+    }
+
+    @Test
+    void aStimulatedRowCarriesItsHeartbeatAndAnUnmanagedRowRendersWithoutAHarness() {
+        DefaultListModel<SidebarEntry> model = new DefaultListModel<>();
+        SidebarEntry stimulated = live("hm-stimulated", "/work/a");
+        stimulated.setStimulated(true);
+        model.addElement(stimulated);
+        model.addElement(SidebarEntry.unmanaged("hm-unmanaged"));
+        JList<SidebarEntry> list = new JList<>(model);
+        SidebarCellRenderer renderer = new SidebarCellRenderer();
+
+        Container marks = marks(render(renderer, list, 0));
+        assertTrue(marks.isVisible());
+        assertTrue(marks.getComponent(0).isVisible());
+        assertFalse(marks.getComponent(1).isVisible());
+        assertFalse(marks.getComponent(3).isVisible());
+
+        JPanel unmanaged = render(renderer, list, 1);
+        assertFalse(marks(unmanaged).isVisible());
+        assertEquals("unmanaged — right-click to adopt", detail(unmanaged).getText());
+    }
+
+    @Test
+    void aPillThatIsTheOnlyMarkIsLaidOutAtFullHeight() {
+        DefaultListModel<SidebarEntry> model = new DefaultListModel<>();
+        SidebarEntry stimulated = live("hm-stimulated", "/work/a");
+        stimulated.setStimulated(true);
+        SidebarEntry waiting = live("hm-waiting", "/work/b");
+        waiting.setState(SessionState.WAITING_FOR_INPUT, "test");
+        model.addElement(stimulated);
+        model.addElement(waiting);
+        JList<SidebarEntry> list = new JList<>(model);
+        SidebarCellRenderer renderer = new SidebarCellRenderer();
+
+        render(renderer, list, 0).getPreferredSize();
+        Container marks = marks(render(renderer, list, 1));
+        marks.setSize(100, 44);
+        marks.doLayout();
+
+        Component pill = marks.getComponent(3);
+        assertEquals(pill.getPreferredSize().height, pill.getHeight());
+    }
+
+    private static JPanel render(SidebarCellRenderer renderer,
                                  JList<SidebarEntry> list, int index) {
         return (JPanel) renderer.getListCellRendererComponent(
                 list, list.getModel().getElementAt(index), index, false, false);
@@ -234,11 +312,19 @@ class SidebarViewTest {
         return (JLabel) ((BorderLayout) cell.getLayout()).getLayoutComponent(BorderLayout.NORTH);
     }
 
-    /** The row's muted path line: the second of the two stacked labels in the center. */
+    /** The row's muted path line: the second of the two stacked labels in the center
+     * (the column also holds the glue that centers them vertically). */
     private static JLabel detail(JPanel cell) {
         Container lines = (Container) ((BorderLayout) cell.getLayout())
                 .getLayoutComponent(BorderLayout.CENTER);
-        return (JLabel) lines.getComponent(1);
+        return java.util.Arrays.stream(lines.getComponents())
+                .filter(JLabel.class::isInstance).map(JLabel.class::cast)
+                .skip(1).findFirst().orElseThrow();
+    }
+
+    /** The row's right-hand marks, in order: heartbeat, stimuli count, remote, pill. */
+    private static Container marks(JPanel cell) {
+        return (Container) ((BorderLayout) cell.getLayout()).getLayoutComponent(BorderLayout.EAST);
     }
 
     private static void assertOrder(List<SidebarEntry> source, SidebarView.SortMode mode,

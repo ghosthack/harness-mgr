@@ -118,10 +118,22 @@ final class SidebarEntry {
     }
 
     void setPaneTitle(String paneTitle) {
-        if (paneTitle != null && !paneTitle.isBlank()) {
-            this.paneTitle = paneTitle;
+        String name = paneTitle == null ? "" : withoutStatusGlyph(paneTitle);
+        if (!name.isBlank()) {
+            this.paneTitle = name;
         }
     }
+
+    /** Harnesses prefix their terminal title with a live status mark: Claude Code's
+     * {@code ✳} when idle, a braille spinner frame while working. The row already shows
+     * status in its badge, and a mark that changes every frame would make the name (and
+     * a name sort) flicker, so it is dropped from the name. */
+    static String withoutStatusGlyph(String title) {
+        return STATUS_GLYPH.matcher(title).replaceFirst("").strip();
+    }
+
+    private static final java.util.regex.Pattern STATUS_GLYPH =
+            java.util.regex.Pattern.compile("^\\s*[\\u2800-\\u28FF\\u2722-\\u273D\\u00B7\\u2022\\u25CF]+(\\s+|$)");
 
     /** The session's name as shown to the user: an explicit persisted rename, then the
      * harness-set OSC title (e.g. Claude Code's /rename), then the tmux session name. */
@@ -167,7 +179,7 @@ final class SidebarEntry {
     /** The row's muted second line: the project dir. The renderer clips this from the
      * left ("…tail"), so the path's most telling segment — the project folder at its
      * end — survives a narrow sidebar. No state is spelled out in text: the
-     * {@code Reticule} screen door says not-attached, the skull icon says dead. */
+     * {@code Reticule} screen door says not-attached, the faded avatar and its cross badge say dead. */
     String detailText() {
         return switch (status) {
             case LIVE, DEAD -> abbreviatedPath();
@@ -202,7 +214,7 @@ final class SidebarEntry {
         } else if (status == Status.LIVE) {
             html.append("<br>status pending first poll…");
         } else if (status == Status.DEAD) {
-            // the skull's fine print: dead isn't gone — Resume… brings it back
+            // the cross badge's fine print: dead isn't gone — Resume… brings it back
             html.append("<br>dead — right-click to resume");
         }
         html.append("</html>");

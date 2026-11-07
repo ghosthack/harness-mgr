@@ -272,7 +272,7 @@ public final class SessionController implements McpToolset {
                     .map(found -> id.isEmpty() && target.harness() == HarnessType.CLAUDE_CODE
                             && sameHarnessAndProject.get(target.harness().id() + "\0" + target.project()) > 1
                             // the newest file there may well be a sibling's: point at the folder
-                            ? found.getParent() + "/ (id unknown and other claude-code sessions share this"
+                            ? found.getParent() + java.io.File.separator + " (id unknown and other claude-code sessions share this"
                                     + " project: one of these files, not necessarily the newest)"
                             : found.toString())
                     .orElse("-");

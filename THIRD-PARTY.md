@@ -9,7 +9,7 @@ platform's `harness-manager-X.Y.Z-PLATFORM-licenses.zip`.
 |---|---|---|---|
 | Azul Zulu OpenJDK | 26 | OpenJDK licenses, including GPLv2 with Classpath Exception; runtime notices bundled | self-contained Java runtime |
 | JediTerm core and UI fork | 3.76-ghosthack.2 | Apache-2.0 option of the upstream dual license; original notices retained | terminal model and Swing widget |
-| jmux | 0.1.0 | MIT; its dependencies retain their own licenses | persistent sessions and Windows ConPTY backend |
+| jmux | 0.1.1 | MIT; its dependencies retain their own licenses | persistent sessions and Windows ConPTY backend |
 | harness-stim | 0.1.0 | MIT | separate stimulator worker |
 | FlatLaf | 3.6 | Apache-2.0 | Swing look and feel |
 | pty4j | 0.13.10 | EPL-1.0 and retained native-component notices | native PTY support |

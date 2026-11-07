@@ -156,7 +156,8 @@ final class HarnessPluginsTest {
         assertEquals(Optional.of("pi --session 01a03190-5463-719c-94f2-c8a627bc2e33"),
                 pi.resumeCommand("01a03190-5463-719c-94f2-c8a627bc2e33"));
         assertTrue(pi.ownsProcess("node"), "node is the exec'd process image, verified live");
-        assertFalse(pi.ownsProcess("pi"), "tmux never reports the shebang script's own name");
+        // tmux reports the process image; the jmux daemon's probe reads the process title
+        assertTrue(pi.ownsProcess("pi"), "the jmux probe reports pi's process title");
     }
 
     @Test

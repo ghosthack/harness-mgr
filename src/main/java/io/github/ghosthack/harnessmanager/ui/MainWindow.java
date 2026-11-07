@@ -56,16 +56,12 @@ import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JSplitPane;
 import javax.swing.JTextField;
-import javax.swing.ListCellRenderer;
-import javax.swing.ListModel;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
-import java.awt.AlphaComposite;
-import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -76,13 +72,9 @@ import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
-import java.awt.RenderingHints;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.KeyEvent;
@@ -461,6 +453,28 @@ public final class MainWindow extends JFrame {
             }
         });
         ToolTipManager.sharedInstance().registerComponent(sidebarList);
+        MouseAdapter hoverTracker = new MouseAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                int index = sidebarList.locationToIndex(e.getPoint());
+                if (index >= 0 && !sidebarList.getCellBounds(index, index).contains(e.getPoint())) {
+                    index = -1;
+                }
+                setSidebarHover(index);
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                mouseMoved(e);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                setSidebarHover(-1);
+            }
+        };
+        sidebarList.addMouseMotionListener(hoverTracker);
+        sidebarList.addMouseListener(hoverTracker);
         sidebarList.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
@@ -1702,6 +1716,22 @@ public final class MainWindow extends JFrame {
         }
         // the session went dead/was removed between the poll firing and this result
         // landing — nothing to update, and the next refreshSidebar() already dropped it
+    }
+
+    /** Moves the sidebar's hover highlight to {@code index} (-1 for none), repainting
+     * only the two rows involved. */
+    private void setSidebarHover(int index) {
+        Object previous = sidebarList.getClientProperty(SidebarCellRenderer.HOVER_INDEX);
+        int old = previous instanceof Integer i ? i : -1;
+        if (old == index) {
+            return;
+        }
+        sidebarList.putClientProperty(SidebarCellRenderer.HOVER_INDEX, index < 0 ? null : index);
+        for (int row : new int[]{old, index}) {
+            if (row >= 0 && row < listModel.size()) {
+                sidebarList.repaint(sidebarList.getCellBounds(row, row));
+            }
+        }
     }
 
     /** One pulse frame: repaint every pulsing row; none left means the animation is
@@ -3540,568 +3570,5 @@ public final class MainWindow extends JFrame {
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
                 "'" + harnessType.id() + "' has no known resume syntax — starting a fresh session instead.",
                 "No resume syntax", JOptionPane.WARNING_MESSAGE));
-    }
-
-    /**
-     * Sidebar row rendering: a status dot on the left (for live entries with a
-     * status-poll result — green working, amber waiting-for-input, gray idle; a skull
-     * for dead rows, whose dot will never come back; an hourglass for live entries
-     * awaiting their first poll; unmanaged entries get none), the
-     * two-line name/path text in the middle, and the harness's glyph badged on the
-     * right, standing in for spelling out "claude-code"/"codex"/"cursor-agent" in the text.
-     *
-     * <p>When the sidebar-reticule setting is enabled, a live row that isn't attached
-     * yet is veiled with the {@link Reticule} screen door instead of a "not attached"
-     * text qualifier — the same dead-end dither text-browser lays over empty tiles,
-     * since nothing is behind the row until it's first selected. It is disabled by
-     * default so the ordinary session tabs stay unobscured.
-     *
-     * <p>With folder grouping on (see {@link #setFolderGrouping}), a run of rows sharing
-     * a project folder is drawn as one group: the folder heads the run once and its rows
-     * drop their own path line, indented into a gutter carrying the group's rule.
-     *
-     * <p>A panel rather than the usual {@code DefaultListCellRenderer}: a label can only
-     * carry one icon, and this row needs one on each side.
-     */
-    static final class SidebarCellRenderer extends JPanel implements ListCellRenderer<SidebarEntry> {
-        private static final Icon WORKING_ICON = new StatusDotIcon(new Color(0x2E, 0xCC, 0x71));
-        private static final Icon PULSING_WORKING_ICON = new PulsingIcon(WORKING_ICON);
-        private static final Icon WAITING_ICON = new StatusDotIcon(new Color(0xFF, 0xC1, 0x07));
-        private static final Icon IDLE_ICON = new StatusDotIcon(new Color(0x9E, 0x9E, 0x9E));
-        private static final Icon STATUS_PENDING_ICON = LucidIcon.hourglass(12);
-        private static final Icon DEAD_ICON = new EmojiIcon("💀", 12);
-        private static final Icon RETICULATED_DEAD_ICON = new ReticulatedIcon(DEAD_ICON);
-
-        private static final Icon HEARTBEAT_ICON = LucidIcon.heartbeat(16);
-        private static final Icon REMOTE_ICON = LucidIcon.wifi(16);
-
-        /** The muted tone the detail line already uses, so the badge reads as secondary
-         * against the row's name. */
-        private static final Color MUTED = new Color(0x8A, 0x8A, 0x8A);
-
-        /** Gutter a grouped row is indented by; its rule is drawn down the middle of it. */
-        private static final int GROUP_INDENT = 12;
-
-        /** Faint enough to read as structure rather than another badge, in either theme. */
-        private static final Color GROUP_RULE = new Color(0x8A, 0x8A, 0x8A, 0xAA);
-
-        private final JLabel icon = new JLabel();
-        private final RightClippedLabel name = new RightClippedLabel();
-        private final LeftClippedLabel detail = new LeftClippedLabel();
-        private final LeftClippedLabel groupHeader = new LeftClippedLabel();
-        private final JLabel heartbeat = new JLabel();
-        private final JLabel stimuliCount = new JLabel();
-        private final JLabel remote = new JLabel();
-        private final JLabel harness = new JLabel();
-
-        /** Whether the row being painted is live but not attached — set per cell in
-         * {@link #getListCellRendererComponent} and consumed by {@link #paint}. */
-        private boolean veiled;
-        private boolean reticuleEnabled;
-
-        /** Whether same-folder runs are drawn as groups at all — only the folder sort
-         * keeps a folder's rows adjacent, so {@link MainWindow} sets this from the sort
-         * mode and the setting together. */
-        private boolean folderGrouping;
-
-        /** Per-cell group ornament state, set in {@link #getListCellRendererComponent}
-         * and consumed by {@link #paint}/{@link #paintComponent}. */
-        private boolean grouped;
-        private boolean groupEnd;
-        private boolean groupDivider;
-
-        /** Non-null while a selected row's folder heading must resist the selection
-         * fill: the list background to paint back over the heading strip. */
-        private Color headerBackground;
-
-        SidebarCellRenderer() {
-            this(false);
-        }
-
-        SidebarCellRenderer(boolean reticuleEnabled) {
-            super(new BorderLayout(8, 0));
-            this.reticuleEnabled = reticuleEnabled;
-            setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 6));
-            // titles and paths are arbitrary text — never let a "<html>" prefix turn a
-            // label into markup
-            name.putClientProperty("html.disable", Boolean.TRUE);
-            detail.putClientProperty("html.disable", Boolean.TRUE);
-            groupHeader.putClientProperty("html.disable", Boolean.TRUE);
-            groupHeader.setBorder(BorderFactory.createEmptyBorder(3, 0, 2, 0));
-            groupHeader.setVisible(false);
-            add(groupHeader, BorderLayout.NORTH);
-            icon.setVerticalAlignment(SwingConstants.CENTER);
-            heartbeat.setVerticalAlignment(SwingConstants.CENTER);
-            heartbeat.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 7));
-            stimuliCount.setVerticalAlignment(SwingConstants.CENTER);
-            stimuliCount.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 7));
-            remote.setVerticalAlignment(SwingConstants.CENTER);
-            remote.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
-            harness.setVerticalAlignment(SwingConstants.CENTER);
-            add(icon, BorderLayout.WEST);
-            JPanel lines = new JPanel();
-            lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
-            lines.setOpaque(false);
-            name.setAlignmentX(LEFT_ALIGNMENT);
-            detail.setAlignmentX(LEFT_ALIGNMENT);
-            lines.add(name);
-            lines.add(detail);
-            add(lines, BorderLayout.CENTER);
-            JPanel badges = new JPanel();
-            badges.setOpaque(false);
-            badges.setLayout(new BoxLayout(badges, BoxLayout.X_AXIS));
-            badges.add(heartbeat);
-            badges.add(stimuliCount);
-            badges.add(remote);
-            badges.add(harness);
-            add(badges, BorderLayout.EAST);
-        }
-
-        void setReticuleEnabled(boolean enabled) {
-            reticuleEnabled = enabled;
-        }
-
-        void setFolderGrouping(boolean enabled) {
-            folderGrouping = enabled;
-        }
-
-        @Override
-        public Component getListCellRendererComponent(JList<? extends SidebarEntry> list, SidebarEntry entry,
-                                                        int index, boolean isSelected, boolean cellHasFocus) {
-            setOpaque(true);
-            setBackground(isSelected ? list.getSelectionBackground() : list.getBackground());
-            Color foreground = isSelected ? list.getSelectionForeground() : list.getForeground();
-            setForeground(foreground);
-
-            name.setFont(list.getFont());
-            // dead rows self-gray — MUTED even when selected, matching the detail line
-            name.setForeground(entry.status() == SidebarEntry.Status.DEAD ? MUTED : foreground);
-            name.setText(entry.nameText());
-            icon.setIcon(statusIcon(entry, reticuleEnabled));
-
-            detail.setFont(list.getFont().deriveFont(list.getFont().getSize2D() - 2f));
-            detail.setForeground(MUTED);
-            detail.setText(entry.detailText());
-
-            harness.setIcon(harnessIcon(entry));
-            // Vector icons tint with the component's foreground: muted normally, but the
-            // selection color when the row is highlighted, where gray-on-blue would sink.
-            // Never setEnabled(false) for a dead row — a JLabel can only derive a
-            // disabled icon from an image, so a drawn one vanishes instead of graying;
-            // MUTED is the dead row's own text gray anyway.
-            harness.setForeground(isSelected ? foreground : MUTED);
-            boolean isRemote = entry.sessionEntry() != null && entry.sessionEntry().isRemote();
-            remote.setIcon(isRemote ? REMOTE_ICON : null);
-            remote.setForeground(isSelected ? foreground : MUTED);
-            heartbeat.setIcon(entry.isStimulated() ? HEARTBEAT_ICON : null);
-            heartbeat.setForeground(isSelected ? foreground : new Color(0xE0, 0x5A, 0x6F));
-
-            StimulatorClient.StimuliStatus stimuliStatus = entry.stimuliStatus();
-            stimuliCount.setIcon(stimuliStatus != null
-                    ? new StimuliCountIcon(stimuliStatus.displayCount()) : null);
-            stimuliCount.setForeground(heartbeat.getForeground());
-
-            veiled = reticuleEnabled
-                    && entry.status() == SidebarEntry.Status.LIVE && !entry.isAttached();
-            applyFolderGroup(list, entry, index, isSelected);
-            return this;
-        }
-
-        /**
-         * Hoists a same-folder run's shared project path onto a heading over its first
-         * row and drops it from every row in the run, so one folder reads as one group
-         * instead of repeating its path line for line. The run's rows are indented into
-         * a gutter carrying the group's rule, which an elbow closes on the last row.
-         *
-         * <p>Group boundaries come from the neighbouring rows of the list model rather
-         * than any state on the entry: whatever the model's order is, a group is exactly
-         * a maximal run of rows sharing a {@link SidebarView#folderGroupKey}.
-         */
-        private void applyFolderGroup(JList<? extends SidebarEntry> list, SidebarEntry entry,
-                                      int index, boolean isSelected) {
-            ListModel<? extends SidebarEntry> model = list.getModel();
-            String key = SidebarView.folderGroupKey(entry);
-            grouped = folderGrouping && !key.isEmpty();
-            boolean groupStart = grouped && !key.equals(groupKeyAt(model, index - 1));
-            groupEnd = grouped && !key.equals(groupKeyAt(model, index + 1));
-            groupDivider = groupStart && index > 0;
-
-            groupHeader.setVisible(groupStart);
-            groupHeader.setText(groupStart ? entry.abbreviatedPath() : "");
-            groupHeader.setFont(list.getFont().deriveFont(Font.BOLD, list.getFont().getSize2D() - 1f));
-            groupHeader.setForeground(MUTED);
-            headerBackground = groupStart && isSelected ? list.getBackground() : null;
-
-            // the heading speaks for the whole run, so the rows under it lose their path
-            detail.setVisible(!grouped);
-            icon.setBorder(grouped
-                    ? BorderFactory.createEmptyBorder(0, GROUP_INDENT, 0, 0) : null);
-        }
-
-        /** Empty past either end of the model, so the first and last rows read as
-         * boundaries without a separate index check. */
-        private static String groupKeyAt(ListModel<? extends SidebarEntry> model, int index) {
-            if (index < 0 || index >= model.getSize()) {
-                return "";
-            }
-            return SidebarView.folderGroupKey(model.getElementAt(index));
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            super.paintComponent(g);
-            // The heading names the folder, not the selected session: keeping the
-            // selection fill off it stops one selected row from reading as two. Safe
-            // here rather than in paint() — the heading's own label paints after this.
-            if (headerBackground != null) {
-                g.setColor(headerBackground);
-                g.fillRect(0, 0, getWidth(), groupHeader.getY() + groupHeader.getHeight());
-            }
-        }
-
-        @Override
-        public void paint(Graphics g) {
-            super.paint(g);
-            paintFolderGroup(g);
-            // over paint(), not paintComponent(): the veil must land on top of the
-            // child labels, which paint after paintComponent runs
-            if (veiled) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setPaint(Reticule.half(getBackground()));
-                g2.fillRect(0, 0, getWidth(), getHeight());
-                g2.dispose();
-            }
-        }
-
-        /** Drawn before the veil so a not-attached row's group rule dims with the row. */
-        private void paintFolderGroup(Graphics g) {
-            if (!grouped) {
-                return;
-            }
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setColor(GROUP_RULE);
-            if (groupDivider) {
-                g2.drawLine(0, 0, getWidth(), 0);
-            }
-            int x = getInsets().left + GROUP_INDENT / 2;
-            int top = groupHeader.isVisible() ? groupHeader.getY() + groupHeader.getHeight() : 0;
-            int bottom = groupEnd ? (top + getHeight()) / 2 : getHeight();
-            g2.drawLine(x, top, x, bottom);
-            if (groupEnd) {
-                g2.drawLine(x, bottom, x + GROUP_INDENT / 2 - 1, bottom);
-            }
-            g2.dispose();
-        }
-
-        static Icon statusIcon(SidebarEntry entry) {
-            return statusIcon(entry, false);
-        }
-
-        static Icon statusIcon(SidebarEntry entry, boolean reticuleEnabled) {
-            if (entry.status() == SidebarEntry.Status.DEAD) {
-                // no poll will ever bring this row a dot
-                return reticuleEnabled ? RETICULATED_DEAD_ICON : DEAD_ICON;
-            }
-            if (entry.status() != SidebarEntry.Status.LIVE) {
-                return null;
-            }
-            if (entry.state() == null) {
-                return STATUS_PENDING_ICON;
-            }
-            return switch (entry.state()) {
-                // attached rows' working dots breathe; a veiled (not-attached) row keeps
-                // its dot still, so the reticule reads as the row's own quiet
-                case WORKING -> entry.isAttached() ? PULSING_WORKING_ICON : WORKING_ICON;
-                case WAITING_FOR_INPUT -> WAITING_ICON;
-                case IDLE -> IDLE_ICON;
-            };
-        }
-
-        /** Null for unmanaged rows: nothing knows what an un-adopted session runs. */
-        private static Icon harnessIcon(SidebarEntry entry) {
-            HarnessType type = entry.harnessType();
-            if (type == null) {
-                return null;
-            }
-            return HarnessIcons.forType(type);
-        }
-    }
-
-    /** A normal JLabel whose text is allowed to shrink inside the sidebar. BasicLabelUI
-     * then clips overflowing text on the right and paints its standard trailing
-     * ellipsis, while preserving the status icon at the left. */
-    private static final class RightClippedLabel extends JLabel {
-
-        @Override
-        public Dimension getPreferredSize() {
-            return new Dimension(0, super.getPreferredSize().height);
-        }
-
-        @Override
-        public Dimension getMinimumSize() {
-            return new Dimension(0, super.getMinimumSize().height);
-        }
-
-        @Override
-        public Dimension getMaximumSize() {
-            return new Dimension(Integer.MAX_VALUE, super.getPreferredSize().height);
-        }
-    }
-
-    /**
-     * A label that clips overflowing text on the <em>left</em>, keeping the tail visible
-     * behind a leading ellipsis — for paths, whose distinguishing part is the end. A
-     * plain JLabel does the opposite (clips the right), and its HTML mode doesn't
-     * ellipsize at all.
-     *
-     * <p>Preferred/maximum sizes ignore the text's width so a long path can never widen
-     * the sidebar's cells (which would put a horizontal scrollbar on the list); the
-     * label just fills whatever width the row's layout gives it and clips to fit.
-     */
-    private static final class LeftClippedLabel extends JLabel {
-
-        @Override
-        public Dimension getPreferredSize() {
-            return new Dimension(0, super.getPreferredSize().height);
-        }
-
-        @Override
-        public Dimension getMaximumSize() {
-            // JLabel's maximum equals its preferred size, which would stop BoxLayout
-            // from stretching the label across the row
-            return new Dimension(Integer.MAX_VALUE, super.getPreferredSize().height);
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            String text = getText();
-            if (text == null || text.isEmpty()) {
-                return;
-            }
-            Graphics2D g2 = (Graphics2D) g.create();
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                        RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                g2.setFont(getFont());
-                g2.setColor(getForeground());
-                FontMetrics fm = g2.getFontMetrics();
-                Insets insets = getInsets();
-                int available = getWidth() - insets.left - insets.right;
-                if (fm.stringWidth(text) > available) {
-                    // keep the longest tail that fits after the ellipsis
-                    int width = fm.stringWidth("…");
-                    int start = text.length();
-                    while (start > 0 && width + fm.charWidth(text.charAt(start - 1)) <= available) {
-                        width += fm.charWidth(text.charAt(start - 1));
-                        start--;
-                    }
-                    text = "…" + text.substring(start);
-                }
-                g2.drawString(text, insets.left,
-                        insets.top + fm.getAscent()
-                                + (getHeight() - insets.top - insets.bottom - fm.getHeight()) / 2);
-            } finally {
-                g2.dispose();
-            }
-        }
-    }
-
-    /**
-     * A single emoji drawn as an icon, letting the platform's colour-emoji font do the
-     * artwork — the one place the sidebar steps outside the drawn-monochrome
-     * {@link LucidIcon} dialect, for the dead row's skull. The glyph is shrunk to fit
-     * the icon box if the font renders it wider, so the box stays an honest layout size.
-     */
-    private static final class EmojiIcon implements Icon {
-        private final String emoji;
-        private final int size;
-
-        EmojiIcon(String emoji, int size) {
-            this.emoji = emoji;
-            this.size = size;
-        }
-
-        @Override
-        public int getIconWidth() {
-            return size;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return size;
-        }
-
-        @Override
-        public void paintIcon(Component c, Graphics g, int x, int y) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            Font font = c.getFont().deriveFont((float) size);
-            FontMetrics fm = c.getFontMetrics(font);
-            int width = fm.stringWidth(emoji);
-            if (width > size) {
-                font = font.deriveFont(size * (float) size / width);
-                fm = c.getFontMetrics(font);
-                width = fm.stringWidth(emoji);
-            }
-            g2.setFont(font);
-            g2.drawString(emoji, x + (size - width) / 2f,
-                    y + (size + fm.getAscent() - fm.getDescent()) / 2f);
-            g2.dispose();
-        }
-    }
-
-    /**
-     * Screens another icon behind the optional {@link Reticule} dither — the same veil
-     * the renderer lays over a not-attached row, scoped to one icon's box. When enabled,
-     * the dead row's skull sits behind the screen door instead of shouting at full
-     * saturation from a muted row. The mark pixels take the component's current
-     * background, so it tracks theme and selection for free.
-     */
-    private static final class ReticulatedIcon implements Icon {
-        private final Icon icon;
-
-        ReticulatedIcon(Icon icon) {
-            this.icon = icon;
-        }
-
-        @Override
-        public int getIconWidth() {
-            return icon.getIconWidth();
-        }
-
-        @Override
-        public int getIconHeight() {
-            return icon.getIconHeight();
-        }
-
-        @Override
-        public void paintIcon(Component c, Graphics g, int x, int y) {
-            icon.paintIcon(c, g, x, y);
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setPaint(Reticule.half(c.getBackground()));
-            g2.fillRect(x, y, icon.getIconWidth(), icon.getIconHeight());
-            g2.dispose();
-        }
-    }
-
-    /**
-     * Breathes another icon: alpha swings from opaque to transparent and back on a
-     * shared wall-clock cosine, so every pulsing dot in the sidebar beats in sync. The
-     * icon itself is stateless — {@code pulseTimer} repaints the rows that carry it,
-     * and each paint just reads the clock.
-     */
-    private static final class PulsingIcon implements Icon {
-        /** One full breath. Slow enough to read as calm activity, not an alert. */
-        private static final int PERIOD_MS = 1200;
-
-        private final Icon icon;
-
-        PulsingIcon(Icon icon) {
-            this.icon = icon;
-        }
-
-        @Override
-        public int getIconWidth() {
-            return icon.getIconWidth();
-        }
-
-        @Override
-        public int getIconHeight() {
-            return icon.getIconHeight();
-        }
-
-        @Override
-        public void paintIcon(Component c, Graphics g, int x, int y) {
-            double phase = (System.currentTimeMillis() % PERIOD_MS) / (double) PERIOD_MS;
-            float alpha = (float) (0.5 + 0.5 * Math.cos(2 * Math.PI * phase));
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-            icon.paintIcon(c, g2, x, y);
-            g2.dispose();
-        }
-    }
-
-    /** A small filled circle in the same-width box as the other status badges, painted
-     * directly rather than loaded from a resource. The shared box keeps the row text
-     * fixed when a pending hourglass changes into a confirmed dot. */
-    private static final class StatusDotIcon implements Icon {
-        private static final int ICON_SIZE = 12;
-        private static final int DOT_SIZE = 10;
-
-        private final Color color;
-
-        StatusDotIcon(Color color) {
-            this.color = color;
-        }
-
-        @Override
-        public int getIconWidth() {
-            return ICON_SIZE;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return ICON_SIZE;
-        }
-
-        @Override
-        public void paintIcon(Component c, Graphics g, int x, int y) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(color);
-            g2.fillOval(x + (ICON_SIZE - DOT_SIZE) / 2,
-                    y + (ICON_SIZE - DOT_SIZE) / 2,
-                    DOT_SIZE, DOT_SIZE);
-            g2.dispose();
-        }
-    }
-
-    /**
-     * The stimuli counter riding alongside the heartbeat badge — stimuli left on a
-     * bounded budget, or stimuli sent so far when the budget is unlimited and there is
-     * nothing to count down from (see {@link StimulatorClient.StimuliStatus#displayCount}).
-     * A thin rounded-rect outline with no fill, digits centered inside, both painted in
-     * whatever color the label is tinted with — so the count reads as one more mark in
-     * the row's icon language rather than a separate notification chip. Width is fixed
-     * to fit three digits regardless of how many are actually shown, so the row doesn't
-     * reflow as the count changes (9 -> 10 -> 100).
-     */
-    private static final class StimuliCountIcon implements Icon {
-        private static final Font FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 10);
-        private static final int WIDTH = 24;
-        private static final int HEIGHT = 14;
-        private static final int ARC = 7;
-
-        private final String text;
-
-        StimuliCountIcon(int remaining) {
-            this.text = Integer.toString(Math.min(remaining, 999));
-        }
-
-        @Override
-        public int getIconWidth() {
-            return WIDTH;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return HEIGHT;
-        }
-
-        @Override
-        public void paintIcon(Component c, Graphics g, int x, int y) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(c.getForeground());
-            g2.setStroke(new BasicStroke(1f));
-            g2.drawRoundRect(x, y, WIDTH - 1, HEIGHT - 1, ARC, ARC);
-            g2.setFont(FONT);
-            FontMetrics fm = g2.getFontMetrics();
-            int textX = x + (WIDTH - fm.stringWidth(text)) / 2;
-            int textY = y + (HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
-            g2.drawString(text, textX, textY);
-            g2.dispose();
-        }
     }
 }
