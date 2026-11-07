@@ -388,8 +388,19 @@ jobs:
             fi
             exit 1
           fi
-          xcrun stapler staple "${images[0]}"
-          xcrun stapler validate "${images[0]}"
+          # Stapling fetches the ticket from Apple's CDN, and runner network drops
+          # (error 68, NSURLErrorDomain -1005) are common: retry before failing.
+          for attempt in 1 2 3 4 5; do
+            if xcrun stapler staple "${images[0]}" && xcrun stapler validate "${images[0]}"; then
+              break
+            fi
+            if (( attempt == 5 )); then
+              echo "Stapling failed after $attempt attempts." >&2
+              exit 1
+            fi
+            echo "Stapling attempt $attempt failed; retrying in $((attempt * 30))s." >&2
+            sleep $((attempt * 30))
+          done
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
